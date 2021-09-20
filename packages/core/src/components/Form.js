@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import _pick from "lodash/pick";
 import _get from "lodash/get";
 import _isEmpty from "lodash/isEmpty";
+import { deepReplaceDatesForJsonSchema } from "../evaluateDates";
 
 import { default as DefaultErrorList } from "./ErrorList";
 import {
@@ -55,14 +56,22 @@ export default class Form extends Component {
 
   getStateFromProps(props, inputFormData) {
     const state = this.state || {};
-    const schema = "schema" in props ? props.schema : this.props.schema;
+    let schema = "schema" in props ? props.schema : this.props.schema;
     const uiSchema = "uiSchema" in props ? props.uiSchema : this.props.uiSchema;
     const edit = typeof inputFormData !== "undefined";
     const liveValidate =
       "liveValidate" in props ? props.liveValidate : this.props.liveValidate;
     const mustValidate = edit && !props.noValidate && liveValidate;
-    const rootSchema = schema;
+    let rootSchema = schema;
     const formData = getDefaultFormState(schema, inputFormData, rootSchema);
+    // fuck it
+    const dateTransformedSchema = deepReplaceDatesForJsonSchema(
+      schema,
+      formData
+    );
+    schema = dateTransformedSchema;
+    rootSchema = dateTransformedSchema;
+
     const retrievedSchema = retrieveSchema(schema, rootSchema, formData);
     const customFormats = props.customFormats;
     const additionalMetaSchemas = props.additionalMetaSchemas;
@@ -121,6 +130,7 @@ export default class Form extends Component {
     );
     const nextState = {
       schema,
+      dateTransformedSchema,
       uiSchema,
       idSchema,
       formData,
@@ -142,7 +152,7 @@ export default class Form extends Component {
 
   validate(
     formData,
-    schema = this.props.schema,
+    schema = this.state.schema,
     additionalMetaSchemas = this.props.additionalMetaSchemas,
     customFormats = this.props.customFormats
   ) {
@@ -221,8 +231,9 @@ export default class Form extends Component {
   };
 
   onChange = (formData, newErrorSchema) => {
+    let newState;
     if (isObject(formData) || Array.isArray(formData)) {
-      const newState = this.getStateFromProps(this.props, formData);
+      newState = this.getStateFromProps(this.props, formData);
       formData = newState.formData;
     }
     const mustValidate = !this.props.noValidate && this.props.liveValidate;
@@ -251,7 +262,7 @@ export default class Form extends Component {
     }
 
     if (mustValidate) {
-      let schemaValidation = this.validate(newFormData);
+      let schemaValidation = this.validate(newFormData, newState.schema);
       let errors = schemaValidation.errors;
       let errorSchema = schemaValidation.errorSchema;
       const schemaValidationErrors = errors;
@@ -286,7 +297,7 @@ export default class Form extends Component {
       };
     }
     this.setState(
-      state,
+      { ...state, schema: newState.schema },
       () => this.props.onChange && this.props.onChange(this.state)
     );
   };

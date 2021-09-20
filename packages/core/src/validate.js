@@ -1,5 +1,7 @@
 import toPath from "lodash/toPath";
 import Ajv from "ajv";
+import addFormats from "ajv-formats";
+
 let ajv = createAjvInstance();
 import { deepEquals, getDefaultFormState } from "./utils";
 
@@ -10,15 +12,27 @@ const ROOT_SCHEMA_PREFIX = "__rjsf_rootSchema";
 import { isObject, mergeObjects } from "./utils";
 
 function createAjvInstance() {
-  const ajv = new Ajv({
-    errorDataPath: "property",
+  var ajv = new Ajv({
     allErrors: true,
     multipleOfPrecision: 8,
-    schemaId: "auto",
-    unknownFormats: "ignore",
+    verbose: true,
+    formats: {
+      date: true,
+      time: true,
+      "date-time": true,
+      "data-url": true,
+      color: true,
+    },
+    strict: false,
+    $data: true,
   });
 
-  // add custom formats
+  addFormats(ajv, {
+    mode: "full",
+    formats: ["date", "date-time", "time"],
+    keywords: true,
+  });
+
   ajv.addFormat(
     "data-url",
     /^data:([a-z]+\/[a-z0-9-+.]+)?;(?:name=(.*);)?base64,(.*)$/
@@ -28,6 +42,31 @@ function createAjvInstance() {
     /^(#?([0-9A-Fa-f]{3}){1,2}\b|aqua|black|blue|fuchsia|gray|green|lime|maroon|navy|olive|orange|purple|red|silver|teal|white|yellow|(rgb\(\s*\b([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\b\s*,\s*\b([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\b\s*,\s*\b([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\b\s*\))|(rgb\(\s*(\d?\d%|100%)+\s*,\s*(\d?\d%|100%)+\s*,\s*(\d?\d%|100%)+\s*\)))$/
   );
   return ajv;
+}
+
+/**
+ * Transform property into object paths that can be used to generate errorSchema.
+ * 'property' has the format of dataPath from ajv errors. This function transforms it
+ * as follows:
+ *  /topLevel/child        -->    ["", "topLevel", "child"]
+ *  /topLevel/with.Dot     -->    ["", "topLevel", "with.Dot"]
+ *  /topLevel/with/Slash   -->    ["", "topLevel", "with~Slash"]
+ * @param {string} property source of error in the data.
+ * @returns {stringp[]} array of object paths.
+ */
+function genPaths(property) {
+  if (property === null || property === undefined) {
+    return [];
+  }
+  const replaceDots = property.replace(/\./g, "~~");
+  const replaceSlash = replaceDots.replace(/\//g, ".");
+  const paths = toPath(replaceSlash);
+
+  const formatedPaths = paths.map(path => {
+    return path.replace(/~~/g, ".");
+  });
+
+  return formatedPaths;
 }
 
 function toErrorSchema(errors) {
@@ -51,7 +90,7 @@ function toErrorSchema(errors) {
   }
   return errors.reduce((errorSchema, error) => {
     const { property, message } = error;
-    const path = toPath(property);
+    const path = genPaths(property);
     let parent = errorSchema;
 
     // If the property is at the root (.level1) then toPath creates
@@ -145,14 +184,26 @@ function transformAjvErrors(errors = []) {
   }
 
   return errors.map(e => {
-    const { dataPath, keyword, message, params, schemaPath } = e;
-    let property = `${dataPath}`;
+    const { instancePath, keyword, message, params, schemaPath } = e;
+    // let property = `${dataPath}`;
+
+    // ajv@7^ does not provide a field name that failed validation for
+    // required fields in an object. We extract the field name and add
+    // it back to the dataPath so we can pinpoint the field that caused
+    // the error and accordingly generate error schema.
+    let fixedDataPath = instancePath;
+    let fixedMessage = message;
+    if (keyword === "required" && params.missingProperty) {
+      fixedDataPath += "/" + params.missingProperty;
+      fixedMessage = "is a required property";
+    }
+    let property = `${fixedDataPath}`;
 
     // put data in expected format
     return {
       name: keyword,
       property,
-      message,
+      message: fixedMessage,
       params, // specific to ajv
       stack: `${property} ${message}`.trim(),
       schemaPath,
@@ -314,3 +365,5 @@ export function isValid(schema, data, rootSchema) {
     ajv.removeSchema(ROOT_SCHEMA_PREFIX);
   }
 }
+
+export const serializeSchema = () => {};

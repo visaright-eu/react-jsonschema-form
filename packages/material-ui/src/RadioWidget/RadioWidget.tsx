@@ -5,7 +5,7 @@ import FormLabel from "@material-ui/core/FormLabel";
 import Radio from "@material-ui/core/Radio";
 import RadioGroup from "@material-ui/core/RadioGroup";
 
-import { WidgetProps } from "@rjsf/core";
+import { WidgetProps } from "@visaright/rjsf-core";
 
 const RadioWidget = ({
   id,
